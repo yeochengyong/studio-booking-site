@@ -55,10 +55,12 @@ const Header = () => (
       <a href="/booking" className="nav-link">BOOKING</a>
     </div>
     <div className="logo-container">
-      <h1 className="logo">
-        <span className="logo-main">ENFINITE</span>
-        <span className="logo-sub">studio</span>
-      </h1>
+      <a href="/" style={{ textDecoration: 'none', color: 'inherit' }}>
+        <h1 className="logo">
+          <span className="logo-main">ENFINITE</span>
+          <span className="logo-sub">studio</span>
+        </h1>
+      </a>
     </div>
     <div className="header-right">
       <a href="/gallery" className="nav-link">GALLERY</a>
