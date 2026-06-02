@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import './Booking.css';
 import ratesBg from '../assets/rates-bg.png'; 
 import qrCodeImg from '../assets/paynow-qrcode.png'; 
@@ -47,6 +47,10 @@ const Footer = () => (
 );
 
 const Booking = () => {
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, []);
+
   const [step, setStep] = useState(1);
   const [selectedDate, setSelectedDate] = useState(null);
   const [selectedSlots, setSelectedSlots] = useState([]);
@@ -127,14 +131,13 @@ const Booking = () => {
       <Header />
 
       <main className="booking-main-content">
-        {/* Fixed Studio Rates Layout */}
+        {/* Studio Rates Layout */}
         <section className="rates-hero" style={{ backgroundImage: `url(${ratesBg})` }}>
           <div className="rates-content-wrapper">
             
             <div className="rates-left-group">
               <div className="vertical-title-container">
-                <span className="vert-word">Studio</span>
-                <span className="vert-word">Rates</span>
+                <span className="vert-word">Studio Rates</span>
               </div>
               
               <div className="rate-categories">

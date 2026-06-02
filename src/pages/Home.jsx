@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import './Home.css';
 import heroimg from '../assets/hero picture - home page.png';
 import loungeImg from '../assets/lounge rest.png';
@@ -159,6 +160,8 @@ const Footer = () => (
 );
 
 const HomePage = () => {
+  const navigate = useNavigate();
+
   return (
     <div className="studio-home-page">
       <Header />
@@ -169,7 +172,7 @@ const HomePage = () => {
       </section>
       <main className="main-content">
         <div className="hero-cta">
-          <button className="book-button">
+          <button className="book-button" onClick={() => navigate('/booking')}>
             Book your session <span aria-hidden="true">→</span>
           </button>
         </div>
@@ -182,7 +185,8 @@ const HomePage = () => {
             <img src={images.desk} alt="Studio Desk Area" />
           </div>
           <p className="cyclorama-text">
-            Enfinite Studio provides you with a 6mx6m cyclorama accompanied by a 24" curve radius ensuring a seamless background and flexible room to light your subject.
+            Enfinite Studio provides you with a 6mx6m cyclorama accompanied by a 24" curve radius ensuring 
+            a seamless background and flexible room to light your subject.
           </p>
         </div>
 
