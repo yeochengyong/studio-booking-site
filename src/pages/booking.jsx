@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Fragment } from 'react';
+import { db } from '../firebase';
+import { collection, addDoc, serverTimestamp, query, where, onSnapshot } from 'firebase/firestore';
 import './Booking.css';
-import ratesBg from '../assets/rates-bg.png'; 
-import qrCodeImg from '../assets/paynow-qrcode.png'; 
+import ratesBg from '../assets/rates-bg.png';
 
 const Header = () => (
   <header className="header">
@@ -52,53 +53,140 @@ const Booking = () => {
   }, []);
 
   const [step, setStep] = useState(1);
-  const [selectedDate, setSelectedDate] = useState(null);
-  const [selectedSlots, setSelectedSlots] = useState([]);
-  const [userDetails, setUserDetails] = useState({ name: '', phone: '', email: '' });
-
-  const calendarDays = Array.from({ length: 30 }, (_, i) => i + 1);
+  const [userDetails, setUserDetails] = useState({ name: '', email: '' });
   
-  const timeSlots = [
-    '09:00', '10:00', '11:00', '12:00',
-    '13:00', '14:00', '15:00', '16:00',
-    '17:00', '18:00', '19:00', '20:00',
-    '21:00', '22:00', '23:00'
-  ];
+  // --- CALENDAR LOGIC ---
+  const today = new Date();
+  const [viewYear, setViewYear] = useState(today.getFullYear());
+  const [viewMonth, setViewMonth] = useState(today.getMonth());
+  const [selectedFullDate, setSelectedFullDate] = useState(null);
 
-  // logic to enforce contiguous selection
-  const handleSlotToggle = (slot) => {
-    if (selectedSlots.length === 0) {
-      setSelectedSlots([slot]);
-      return;
-    }
+  const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  
+  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const firstDayOfWeek = new Date(viewYear, viewMonth, 1).getDay();
+  
+  const paddingDays = Array.from({ length: firstDayOfWeek }, (_, i) => i);
+  const monthDays = Array.from({ length: daysInMonth }, (_, i) => i + 1);
 
-    const sortedCurrent = [...selectedSlots].sort();
-    const slotIndex = timeSlots.indexOf(slot);
-    const firstIndex = timeSlots.indexOf(sortedCurrent[0]);
-    const lastIndex = timeSlots.indexOf(sortedCurrent[sortedCurrent.length - 1]);
-
-    if (selectedSlots.includes(slot)) {
-      // If clicking already selected slot, only allow unselecting from ends
-      if (slotIndex === firstIndex || slotIndex === lastIndex) {
-        setSelectedSlots(selectedSlots.filter(s => s !== slot));
-      } else {
-        // If they click in the middle, reset selection to just that slot
-        setSelectedSlots([slot]);
-      }
+  const handlePrevMonth = () => {
+    if (viewYear === today.getFullYear() && viewMonth === today.getMonth()) return;
+    if (viewMonth === 0) {
+      setViewMonth(11);
+      setViewYear(viewYear - 1);
     } else {
-      // If adding a new slot, it must be right before the first or right after the last
-      if (slotIndex === firstIndex - 1 || slotIndex === lastIndex + 1) {
-        setSelectedSlots([...selectedSlots, slot].sort());
-      } else {
-        // If they click a slot far away, start a brand new selection block
-        setSelectedSlots([slot]);
-      }
+      setViewMonth(viewMonth - 1);
     }
   };
 
-  // calc price based on slot & rates
+  const handleNextMonth = () => {
+    const maxDate = new Date(today.getFullYear(), today.getMonth() + 3, 1);
+    const nextMonthDate = new Date(viewYear, viewMonth + 1, 1);
+    if (nextMonthDate > maxDate) return;
+    if (viewMonth === 11) {
+      setViewMonth(0);
+      setViewYear(viewYear + 1);
+    } else {
+      setViewMonth(viewMonth + 1);
+    }
+  };
+
+  const isPastDate = (day) => {
+    if (viewYear < today.getFullYear()) return true;
+    if (viewYear === today.getFullYear() && viewMonth < today.getMonth()) return true;
+    if (viewYear === today.getFullYear() && viewMonth === today.getMonth() && day < today.getDate()) return true;
+    return false;
+  };
+
+  // --- REAL-TIME DATABASE LISTENER ---
+  const [bookedSlots, setBookedSlots] = useState([]);
+
+  useEffect(() => {
+    if (!selectedFullDate) {
+      setBookedSlots([]);
+      return;
+    }
+
+    setSelectedSlots([]); // Clear selections when date changes
+
+    const q = query(
+      collection(db, "booking_requests"), 
+      where("date", "==", selectedFullDate)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      let taken = [];
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        if (data.status !== 'denied') {
+          taken = [...taken, ...(data.slots || [])];
+        }
+      });
+      setBookedSlots(taken);
+    });
+
+    return () => unsubscribe();
+  }, [selectedFullDate]);
+
+
+  // --- TIME SLOT LOGIC ---
+  const [showOvernight, setShowOvernight] = useState(false);
+  const [selectedSlots, setSelectedSlots] = useState([]);
+  const [hoveredSlot, setHoveredSlot] = useState(null); // NEW: Track hover state
+
+  const defaultTimeSlots = [
+    '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', 
+    '15:00', '16:00', '17:00', '18:00', '19:00', '20:00', 
+    '21:00', '22:00', '23:00'
+  ];
+
+  const overnightSlots = [
+    '00:00', '01:00', '02:00', '03:00', 
+    '04:00', '05:00', '06:00', '07:00', '08:00'
+  ];
+
+  const activeTimeSlots = showOvernight 
+    ? [...defaultTimeSlots, ...overnightSlots] 
+    : defaultTimeSlots;
+
+  const handleOvernightToggle = () => {
+    setShowOvernight(!showOvernight);
+    setSelectedSlots([]); 
+  };
+
+  const handleSlotToggle = (clickedSlot) => {
+    if (selectedSlots.length === 0) {
+      setSelectedSlots([clickedSlot]);
+      return;
+    }
+
+    if (selectedSlots.length === 1 && selectedSlots[0] === clickedSlot) {
+      setSelectedSlots([]);
+      return;
+    }
+
+    if (selectedSlots.length > 1) {
+      setSelectedSlots([clickedSlot]);
+      return;
+    }
+
+    const startIndex = activeTimeSlots.indexOf(selectedSlots[0]);
+    const endIndex = activeTimeSlots.indexOf(clickedSlot);
+    const minIndex = Math.min(startIndex, endIndex);
+    const maxIndex = Math.max(startIndex, endIndex);
+    const newRange = activeTimeSlots.slice(minIndex, maxIndex + 1);
+
+    const hasConflict = newRange.some(slot => bookedSlots.includes(slot));
+    if (hasConflict) {
+      alert("You cannot select a range that includes already booked times. Please adjust your selection.");
+      return;
+    }
+
+    setSelectedSlots(newRange);
+  };
+
   const calculateTotal = () => {
-    let total = 20; // $20 base cleaning fee
+    let total = 20; 
     selectedSlots.forEach(slot => {
       const hour = parseInt(slot.split(':')[0]);
       if (hour >= 8 && hour <= 20) {
@@ -110,20 +198,33 @@ const Booking = () => {
     return total;
   };
 
-  const handleNextStep = () => {
-    if (step === 1 && selectedDate && selectedSlots.length >= 2) {
-      setStep(2);
-    } else if (step === 2 && userDetails.name && userDetails.phone) {
-      setStep(3);
-    }
+  const getFormattedDate = (dateStr) => {
+    if (!dateStr) return "Select a date";
+    const dateObj = new Date(dateStr);
+    return dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
   };
 
-  // temp static whatsapp link gen (to be worked on)
-  const generateWhatsAppLink = () => {
-    const phone = "65XXXXXXXX";
-    const total = calculateTotal();
-    const text = `Hi Enfinite Studio! I've just made a payment for a booking.%0A%0A*Name:* ${userDetails.name}%0A*Phone:* ${userDetails.phone}%0A*Date:* April ${selectedDate}, 2026%0A*Time:* ${selectedSlots[0]} to ${selectedSlots[selectedSlots.length - 1]} (${selectedSlots.length} hours)%0A*Total Paid:* $${total}%0A%0AI will attach my payment screenshot below!`;
-    return `https://wa.me/${phone}?text=${text}`;
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const submitBookingRequest = async () => {
+    setIsSubmitting(true);
+    try {
+      await addDoc(collection(db, "booking_requests"), {
+        name: userDetails.name,
+        email: userDetails.email,
+        date: selectedFullDate,
+        slots: selectedSlots,
+        estimatedTotal: calculateTotal(),
+        status: 'pending_review',
+        createdAt: serverTimestamp()
+      });
+      setStep(3); 
+    } catch (error) {
+      console.error("Error submitting booking: ", error);
+      alert("Something went wrong connecting to the database. Check console.");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -131,15 +232,12 @@ const Booking = () => {
       <Header />
 
       <main className="booking-main-content">
-        {/* Studio Rates Layout */}
         <section className="rates-hero" style={{ backgroundImage: `url(${ratesBg})` }}>
           <div className="rates-content-wrapper">
-            
             <div className="rates-left-group">
               <div className="vertical-title-container">
                 <span className="vert-word">Studio Rates</span>
               </div>
-              
               <div className="rate-categories">
                 <div className="rate-category">
                   <h2>Weekdays</h2>
@@ -167,135 +265,186 @@ const Booking = () => {
               <div className="rate-per-hour">per hour</div>
             </div>
           </div>
-          
           <div className="cleaning-fee-note">
             each booking comes with an additional $20 cleaning fee
           </div>
         </section>
 
-        {/* Schedule Section */}
         <section className="schedule-section">
           
-          {/* Instructions Block */}
-          <div className="booking-instructions">
-            <h3>How to Book</h3>
-            <div className="instruction-steps">
-              <p><span>1</span> Select your desired date and back-to-back timeslots (min. 2 hours).</p>
-              <p><span>2</span> Confirm your details and total pricing.</p>
-              <p><span>3</span> Make payment via PayNow and send us your receipt via WhatsApp to secure your slot!</p>
-            </div>
-          </div>
-
-          <div className="schedule-header">
-            <h2>Schedule</h2>
-            <p>date & time</p>
-          </div>
-
           {step === 1 && (
-            <div className="booking-grid">
-              <div className="calendar-container">
-                <div className="calendar-header">
-                  <button className="cal-nav">&lt;</button>
-                  <span className="cal-month">April 2026</span>
-                  <button className="cal-nav">&gt;</button>
-                </div>
-                <div className="calendar-days-grid">
-                  {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map(day => (
-                    <div key={day} className="cal-day-name">{day}</div>
-                  ))}
-                  <div className="cal-date empty">29</div>
-                  <div className="cal-date empty">30</div>
-                  <div className="cal-date empty">31</div>
-                  
-                  {calendarDays.map(day => (
-                    <button 
-                      key={day} 
-                      className={`cal-date ${selectedDate === day ? 'selected' : ''}`}
-                      onClick={() => setSelectedDate(day)}
-                    >
-                      {day}
-                    </button>
-                  ))}
+            <>
+              <div className="booking-instructions">
+                <h3>How to Book</h3>
+                <div className="instruction-steps">
+                  <p><span>1</span> Click your Start Time, then click your End Time (min. 2 hours).</p>
+                  <p><span>2</span> Fill in your contact details and review the estimated price.</p>
+                  <p><span>3</span> Submit your request. We will contact you shortly to confirm your slot!</p>
                 </div>
               </div>
 
-              <div className="time-slots-container">
-                <div className="slots-grid">
-                  {timeSlots.map(slot => (
-                    <button 
-                      key={slot}
-                      className={`time-slot ${selectedSlots.includes(slot) ? 'selected' : ''}`}
-                      onClick={() => handleSlotToggle(slot)}
-                    >
-                      {slot}
-                    </button>
-                  ))}
-                  <div className="time-slot placeholder">+</div>
+              <div className="schedule-header">
+                <h2>Schedule</h2>
+                <p>date & time</p>
+              </div>
+
+              <div className="booking-grid">
+                <div className="calendar-container">
+                  <div className="calendar-header">
+                    <button className="cal-nav" onClick={handlePrevMonth}>&lt;</button>
+                    <span className="cal-month">{monthNames[viewMonth]} {viewYear}</span>
+                    <button className="cal-nav" onClick={handleNextMonth}>&gt;</button>
+                  </div>
+                  <div className="calendar-days-grid">
+                    {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map(day => (
+                      <div key={day} className="cal-day-name">{day}</div>
+                    ))}
+                    
+                    {paddingDays.map(day => (
+                      <div key={`empty-${day}`} className="cal-date empty"></div>
+                    ))}
+                    
+                    {monthDays.map(day => {
+                      const dateString = `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                      const isPast = isPastDate(day);
+                      return (
+                        <button 
+                          key={day} 
+                          className={`cal-date ${selectedFullDate === dateString ? 'selected' : ''} ${isPast ? 'empty' : ''}`}
+                          onClick={() => !isPast && setSelectedFullDate(dateString)}
+                          disabled={isPast}
+                        >
+                          {day}
+                        </button>
+                      )
+                    })}
+                  </div>
                 </div>
-                
-                <div className="booking-actions">
-                  <p className="min-hours-note">
-                    {selectedSlots.length < 2 ? "Please select adjacent timeslots (minimum 2 hours)" : `${selectedSlots.length} continuous hours selected`}
-                  </p>
-                  <button 
-                    className="continue-btn" 
-                    disabled={!selectedDate || selectedSlots.length < 2}
-                    onClick={handleNextStep}
-                  >
-                    Continue to Details
-                  </button>
+
+                <div className="time-slots-container">
+                  <div className="slots-grid">
+                    {activeTimeSlots.map((slot, index) => {
+                      const isBooked = bookedSlots.includes(slot);
+                      const isFirstOvernight = showOvernight && slot === '00:00';
+                      
+                      // Calculate the live hover range preview
+                      let isHoverRange = false;
+                      let isConflictRange = false;
+
+                      if (selectedSlots.length === 1 && hoveredSlot) {
+                        const startIndex = activeTimeSlots.indexOf(selectedSlots[0]);
+                        const hoverIndex = activeTimeSlots.indexOf(hoveredSlot);
+                        const min = Math.min(startIndex, hoverIndex);
+                        const max = Math.max(startIndex, hoverIndex);
+                        
+                        if (index >= min && index <= max) {
+                          const range = activeTimeSlots.slice(min, max + 1);
+                          const hasConflict = range.some(s => bookedSlots.includes(s));
+                          if (hasConflict) {
+                            isConflictRange = true;
+                          } else {
+                            isHoverRange = true;
+                          }
+                        }
+                      }
+
+                      return (
+                        <Fragment key={slot}>
+                          {isFirstOvernight && (
+                            <div className="overnight-divider">Overnight</div>
+                          )}
+                          <button 
+                            className={`
+                              time-slot 
+                              ${selectedSlots.includes(slot) ? 'selected' : ''} 
+                              ${isBooked ? 'booked' : ''} 
+                              ${isHoverRange ? 'hover-range' : ''}
+                              ${isConflictRange ? 'conflict-range' : ''}
+                            `}
+                            onClick={() => !isBooked && handleSlotToggle(slot)}
+                            onMouseEnter={() => setHoveredSlot(slot)}
+                            onMouseLeave={() => setHoveredSlot(null)}
+                            disabled={isBooked}
+                          >
+                            {slot}
+                          </button>
+                        </Fragment>
+                      );
+                    })}
+                    
+                    <button 
+                      className="time-slot toggle-overnight" 
+                      onClick={handleOvernightToggle}
+                    >
+                      {showOvernight ? '- Hide Overnight' : '+ Add Overnight'}
+                    </button>
+                  </div>
+                  
+                  <div className="booking-actions">
+                    <div className="live-selection-box">
+                      <h4>Current Selection</h4>
+                      <div className="selection-item">
+                        <span className="label">Date:</span>
+                        <span className="value">{getFormattedDate(selectedFullDate)}</span>
+                      </div>
+                      <div className="selection-item">
+                        <span className="label">Time:</span>
+                        <span className={`value ${selectedSlots.length < 2 ? 'incomplete' : ''}`}>
+                          {selectedSlots.length >= 2 
+                            ? `${selectedSlots[0]} - ${selectedSlots[selectedSlots.length - 1]} (${selectedSlots.length} hrs)`
+                            : 'Select start & end times (min 2)'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <button 
+                      className="continue-btn" 
+                      disabled={!selectedFullDate || selectedSlots.length < 2}
+                      onClick={() => setStep(2)}
+                    >
+                      Continue to Details
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
+            </>
           )}
 
           {step === 2 && (
              <div className="details-form-container">
-               <h3>Your Details</h3>
+               <h3>Review & Submit</h3>
                <div className="summary-box">
-                 <p><strong>Date:</strong> April {selectedDate}, 2026</p>
-                 <p><strong>Time:</strong> {selectedSlots[0]} - {selectedSlots[selectedSlots.length - 1]} ({selectedSlots.length} hours)</p>
-                 <p><strong>Total:</strong> ${calculateTotal()} (incl. $20 cleaning fee)</p>
+                 <p><strong>Date:</strong> {getFormattedDate(selectedFullDate)}</p>
+                 <p><strong>Time:</strong> {selectedSlots[0]} - {selectedSlots[selectedSlots.length - 1]}</p>
+                 <p><strong>Estimated Total:</strong> ${calculateTotal()} (incl. $20 cleaning fee)</p>
                </div>
                <div className="form-group">
                  <input type="text" placeholder="Full Name" value={userDetails.name} onChange={e => setUserDetails({...userDetails, name: e.target.value})} />
-                 <input type="tel" placeholder="Phone Number" value={userDetails.phone} onChange={e => setUserDetails({...userDetails, phone: e.target.value})} />
                  <input type="email" placeholder="Email Address" value={userDetails.email} onChange={e => setUserDetails({...userDetails, email: e.target.value})} />
                </div>
                <div className="step-actions">
                  <button className="back-btn" onClick={() => setStep(1)}>Back</button>
-                 <button className="continue-btn" disabled={!userDetails.name || !userDetails.phone} onClick={handleNextStep}>Proceed to Payment</button>
-               </div>
-             </div>
-           )}
- 
-           {step === 3 && (
-             <div className="payment-container">
-               <h3>Secure your slot</h3>
-               <p>Please make a payment of <strong>${calculateTotal()}</strong> via PayNow to confirm your booking.</p>
-               
-               <div className="qr-box">
-                 <img src={qrCodeImg} alt="PayNow QR Code" />
-               </div>
- 
-               <div className="confirmation-instructions">
-                 <p>1. Scan the QR code and complete the transfer.</p>
-                 <p>2. Take a screenshot of your successful transaction.</p>
-                 <p>3. Click the button below to send us your details via WhatsApp!</p>
-               </div>
- 
-               <div className="step-actions">
-                 <button className="back-btn" onClick={() => setStep(2)}>Back</button>
-                 <a href={generateWhatsAppLink()} target="_blank" rel="noreferrer" className="whatsapp-btn">
-                   Send Booking via WhatsApp
-                 </a>
+                 <button 
+                    className="continue-btn" 
+                    disabled={!userDetails.name || !userDetails.email || isSubmitting} 
+                    onClick={submitBookingRequest}
+                  >
+                    {isSubmitting ? 'Submitting...' : 'Submit Booking'}
+                  </button>
                </div>
              </div>
            )}
 
+           {step === 3 && (
+             <div className="success-container">
+               <div className="success-icon">✓</div>
+               <h3>Request Sent!</h3>
+               <p>Thank you, {userDetails.name}. We have received your booking request for <strong>{getFormattedDate(selectedFullDate)}</strong>.</p>
+               <button className="back-home-btn" onClick={() => window.location.href = '/'}>Return Home</button>
+             </div>
+           )}
         </section>
       </main>
-
       <Footer />
     </div>
   );
